@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student-Teacher Booking Appointment</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .modal {
+            display: none; /* Hidden by default */
+            position: fixed; /* Stay in place */
+            z-index: 50; /* Sit on top */
+            left: 0;
+            top: 0;
+            width: 100%; /* Full width */
+            height: 100%; /* Full height */
+            overflow: auto; /* Enable scroll if needed */
+            background-color: rgba(0,0,0,0.4); /* Black w/ opacity */
+        }
+        .modal-content {
+            background-color: #fefefe;
+            margin: 15% auto; /* 15% from the top and centered */
+            padding: 20px;
+            border: 1px solid #888;
+            width: 80%; /* Could be more or less, depending on screen size */
+            max-width: 500px;
+            border-radius: 0.5rem;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+    <!-- Main Container -->
+    <div id="app" class="container mx-auto p-4 max-w-7xl">
+
+        <!-- Header -->
+        <header class="bg-white shadow-md rounded-lg p-6 mb-8">
+            <h1 class="text-3xl font-bold text-center text-gray-700">Student-Teacher Appointment System</h1>
+            <div id="user-info" class="text-center mt-2"></div>
+            <nav id="nav-bar" class="flex justify-center space-x-4 mt-4"></nav>
+        </header>
+
+        <!-- Dynamic Content Area -->
+        <main id="content-area" class="bg-white shadow-md rounded-lg p-6">
+            <!-- Login/Register will be rendered here initially -->
+        </main>
+    </div>
+
+    <!-- Message Modal -->
+    <div id="messageModal" class="modal">
+        <div class="modal-content">
+            <h2 id="messageModalTitle" class="text-xl font-bold mb-4">Message</h2>
+            <p id="messageModalText"></p>
+            <div class="text-right mt-4">
+                <button id="messageModalClose" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">Close</button>
+            </div>
+        </div>
+    </div>
+
+
+    <script type="module">
+        // Firebase Imports
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import {
+            getAuth,
+            createUserWithEmailAndPassword,
+            signInWithEmailAndPassword,
+            signOut,
+            onAuthStateChanged,
+            updateProfile
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import {
+            getFirestore,
+            collection,
+            addDoc,
+            getDocs,
+            doc,
+            getDoc,
+            setDoc,
+            updateDoc,
+            deleteDoc,
+            query,
+            where,
+            onSnapshot,
+            serverTimestamp
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-functions.js";
+
+
+        // --- FIREBASE CONFIGURATION ---
+        const firebaseConfig = {
+            // Your Firebase config object goes here.
+            // Since this is a demo, we will use placeholder values.
+            // In a real application, you would replace these with your actual
+            // Firebase project configuration.
+            apiKey: "AIzaSyDaHP3eMR7b57tY9rIqvd0NGcNENH1DR9Q",
+  authDomain: "student-teacher-appontme-f4959.firebaseapp.com",
+  projectId: "student-teacher-appontme-f4959",
+  storageBucket: "student-teacher-appontme-f4959.firebasestorage.app",
+  messagingSenderId: "3168154675",
+  appId: "1:3168154675:web:8e3bdb1a9588c1be1c1f46",
+  measurementId: "G-RYP7XRJLW2"
+        };
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // --- GLOBAL STATE & ELEMENTS ---
+        const contentArea = document.getElementById('content-area');
+        const userInfo = document.getElementById('user-info');
+        const navBar = document.getElementById('nav-bar');
+
+        let currentUser = null;
+        let currentUserRole = null;
+
+
+        // --- AUTHENTICATION ---
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                currentUser = user;
+                const userDocRef = doc(db, "users", user.uid);
+                const userDoc = await getDoc(userDocRef);
+                if (userDoc.exists()) {
+                    currentUserRole = userDoc.data().role;
+                } else {
+                    // This could be an admin who is not in the users collection
+                    // For this project, we assume admin is pre-set in Firestore
+                    // or handled via custom claims. For simplicity, we'll check a display name.
+                    if(user.displayName === 'Admin'){
+                       currentUserRole = 'admin';
+                    } else {
+                        // Default to student if no role found for some reason
+                        currentUserRole = 'student';
+                    }
+                }
+                renderApp();
+            } else {
+                currentUser = null;
+                currentUserRole = null;
+                renderLogin();
+            }
+        });
+
+
+        // --- RENDERING LOGIC ---
+        function renderApp() {
+            updateUserInfo();
+            renderNavbar();
+            switch (currentUserRole) {
+                case 'admin':
+                    renderAdminDashboard();
+                    break;
+                case 'teacher':
+                    renderTeacherDashboard();
+                    break;
+                case 'student':
+                    renderStudentDashboard();
+                    break;
+                default:
+                    renderLogin();
+            }
+        }
+
+        function updateUserInfo() {
+            if (currentUser) {
+                userInfo.innerHTML = `
+                    <p>Welcome, <span class="font-semibold">${currentUser.displayName || currentUser.email}</span>! (Role: ${currentUserRole})</p>
+                `;
+            } else {
+                userInfo.innerHTML = '';
+            }
+        }
+
+        function renderNavbar() {
+            let navLinks = '';
+            if (currentUser) {
+                if (currentUserRole === 'admin') {
+                    navLinks += `<button data-page="teachers" class="nav-btn px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-200">Manage Teachers</button>`;
+                    navLinks += `<button data-page="students" class="nav-btn px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-200">Approve Students</button>`;
+                }
+                if (currentUserRole === 'teacher') {
+                    navLinks += `<button data-page="schedule" class="nav-btn px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-200">My Schedule</button>`;
+                    navLinks += `<button data-page="appointments" class="nav-btn px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-200">Appointments</button>`;
+                }
+                if (currentUserRole === 'student') {
+                    navLinks += `<button data-page="search" class="nav-btn px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-200">Book Appointment</button>`;
+                    navLinks += `<button data-page="my-appointments" class="nav-btn px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-200">My Appointments</button>`;
+                }
+                navLinks += `<button id="logout-btn" class="px-3 py-2 rounded-md text-sm font-medium text-white bg-red-500 hover:bg-red-600">Logout</button>`;
+            }
+            navBar.innerHTML = navLinks;
+        }
+
+        // --- AUTH FORMS & ACTIONS ---
+        function renderLogin() {
+            navBar.innerHTML = '';
+            contentArea.innerHTML = `
+                <div class="max-w-md mx-auto">
+                    <h2 class="text-2xl font-bold text-center mb-6">Login</h2>
+                    <form id="login-form" class="space-y-4">
+                        <input type="email" id="login-email" placeholder="Email" required class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <input type="password" id="login-password" placeholder="Password" required class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <button type="submit" class="w-full bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg">Login</button>
+                    </form>
+                    <p class="text-center mt-4">Don't have an account? <a href="#" id="show-register" class="text-blue-500 hover:underline">Register here</a></p>
+                </div>
+            `;
+        }
+
+        function renderRegister() {
+            contentArea.innerHTML = `
+                <div class="max-w-md mx-auto">
+                    <h2 class="text-2xl font-bold text-center mb-6">Register as a Student</h2>
+                     <form id="register-form" class="space-y-4">
+                        <input type="text" id="register-name" placeholder="Full Name" required class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <input type="email" id="register-email" placeholder="Email" required class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <input type="password" id="register-password" placeholder="Password" required class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <button type="submit" class="w-full bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg">Register</button>
+                    </form>
+                    <p class="text-center mt-4">Already have an account? <a href="#" id="show-login" class="text-blue-500 hover:underline">Login here</a></p>
+                </div>
+            `;
+        }
+
+        async function handleRegister(e) {
+            e.preventDefault();
+            const name = document.getElementById('register-name').value;
+            const email = document.getElementById('register-email').value;
+            const password = document.getElementById('register-password').value;
+            try {
+                const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+                const user = userCredential.user;
+                await updateProfile(user, { displayName: name });
+                // Store user role and status in Firestore
+                await setDoc(doc(db, "users", user.uid), {
+                    uid: user.uid,
+                    name: name,
+                    email: email,
+                    role: 'student',
+                    approved: false, // Admin needs to approve
+                    createdAt: serverTimestamp()
+                });
+                showMessage("Registration successful! Please wait for admin approval before logging in.");
+                await signOut(auth); // Sign out until approved
+                renderLogin();
+            } catch (error) {
+                showMessage(`Registration failed: ${error.message}`);
+                console.error("Registration error:", error);
+            }
+        }
+
+
+        async function handleLogin(e) {
+            e.preventDefault();
+            const email = document.getElementById('login-email').value;
+            const password = document.getElementById('login-password').value;
+            try {
+                // Special admin login
+                if (email === "admin@system.com" && password === "admin123") {
+                    await signInWithEmailAndPassword(auth, email, password).catch(async (error) => {
+                        if (error.code === 'auth/user-not-found') {
+                            const adminCredential = await createUserWithEmailAndPassword(auth, email, password);
+                            await updateProfile(adminCredential.user, { displayName: "Admin" });
+                        } else {
+                            throw error;
+                        }
+                    });
+                     // Let onAuthStateChanged handle rendering
+                    return;
+                }
+
+                const userCredential = await signInWithEmailAndPassword(auth, email, password);
+                const user = userCredential.user;
+                const userDoc = await getDoc(doc(db, "users", user.uid));
+                if (userDoc.exists() && userDoc.data().approved) {
+                    // Let onAuthStateChanged handle rendering
+                } else if (userDoc.exists() && !userDoc.data().approved) {
+                    await signOut(auth);
+                    showMessage("Your account is pending approval from the administrator.");
+                } else {
+                    // This could be a teacher, check teachers collection
+                     const teacherDoc = await getDoc(doc(db, "teachers", user.uid));
+                     if (teacherDoc.exists()) {
+                        // Let onAuthStateChanged handle rendering
+                     } else {
+                        await signOut(auth);
+                        showMessage("No approved student or teacher account found for this email.");
+                     }
+                }
+
+            } catch (error) {
+                showMessage(`Login failed: ${error.message}`);
+                console.error("Login error:", error);
+            }
+        }
+
+        async function handleLogout() {
+            try {
+                await signOut(auth);
+                renderLogin();
+            } catch (error) {
+                showMessage(`Logout failed: ${error.message}`);
+                console.error("Logout error:", error);
+            }
+        }
+
+
+        // --- ADMIN DASHBOARD ---
+        function renderAdminDashboard() {
+            contentArea.innerHTML = `
+                <h2 class="text-2xl font-bold mb-4">Admin Dashboard</h2>
+                <p>Welcome, Admin. Select an option from the navigation bar.</p>
+            `;
+            renderManageTeachers(); // Default view
+        }
+
+        async function renderManageTeachers() {
+            contentArea.innerHTML = `
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div class="md:col-span-1">
+                        <h3 class="text-xl font-bold mb-4">Add/Edit Teacher</h3>
+                        <form id="teacher-form" class="space-y-4">
+                            <input type="hidden" id="teacher-id">
+                            <input type="text" id="teacher-name" placeholder="Full Name" required class="w-full px-4 py-2 border rounded-lg">
+                            <input type="email" id="teacher-email" placeholder="Email" required class="w-full px-4 py-2 border rounded-lg">
+                            <input type="password" id="teacher-password" placeholder="Password (required for new teacher)" class="w-full px-4 py-2 border rounded-lg">
+                            <input type="text" id="teacher-department" placeholder="Department" required class="w-full px-4 py-2 border rounded-lg">
+                            <input type="text" id="teacher-subject" placeholder="Subject" required class="w-full px-4 py-2 border rounded-lg">
+                            <div class="flex space-x-2">
+                               <button type="submit" class="flex-1 bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg">Save Teacher</button>
+                               <button type="button" id="clear-form-btn" class="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg">Clear</button>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="md:col-span-2">
+                        <h3 class="text-xl font-bold mb-4">Teacher List</h3>
+                        <div id="teacher-list" class="space-y-2"></div>
+                    </div>
+                </div>
+            `;
+            loadTeachers();
+        }
+
+        async function loadTeachers() {
+            const teacherListDiv = document.getElementById('teacher-list');
+            teacherListDiv.innerHTML = '<p>Loading teachers...</p>';
+            try {
+                const querySnapshot = await getDocs(collection(db, "teachers"));
+                let teachersHTML = '';
+                querySnapshot.forEach((doc) => {
+                    const teacher = doc.data();
+                    teachersHTML += `
+                        <div class="p-4 bg-gray-50 rounded-lg flex justify-between items-center">
+                            <div>
+                                <p class="font-bold">${teacher.name}</p>
+                                <p class="text-sm text-gray-600">${teacher.department} - ${teacher.subject}</p>
+                                <p class="text-sm text-gray-600">${teacher.email}</p>
+                            </div>
+                            <div class="space-x-2">
+                                <button data-id="${doc.id}" class="edit-teacher-btn text-sm bg-yellow-500 hover:bg-yellow-600 text-white py-1 px-3 rounded">Edit</button>
+                                <button data-id="${doc.id}" class="delete-teacher-btn text-sm bg-red-500 hover:bg-red-600 text-white py-1 px-3 rounded">Delete</button>
+                            </div>
+                        </div>
+                    `;
+                });
+                teacherListDiv.innerHTML = teachersHTML || '<p>No teachers found.</p>';
+            } catch (error) {
+                console.error("Error loading teachers:", error);
+                teacherListDiv.innerHTML = '<p class="text-red-500">Error loading teachers.</p>';
+            }
+        }
+        
+        async function handleTeacherFormSubmit(e) {
+            e.preventDefault();
+            const id = document.getElementById('teacher-id').value;
+            const name = document.getElementById('teacher-name').value;
+            const email = document.getElementById('teacher-email').value;
+            const password = document.getElementById('teacher-password').value;
+            const department = document.getElementById('teacher-department').value;
+            const subject = document.getElementById('teacher-subject').value;
+
+            const teacherData = { name, email, department, subject };
+
+            try {
+                if (id) { // Update existing teacher
+                    await updateDoc(doc(db, "teachers", id), teacherData);
+                     showMessage("Teacher updated successfully!");
+                } else { // Create new teacher
+                    if (!password) {
+                        showMessage("Password is required for new teachers.");
+                        return;
+                    }
+                    // This is a simplified approach. In a real app, you would use Firebase Functions
+                    // to create the user to avoid exposing admin credentials on the client.
+                    // For this project, we'll create the user and then add their details to Firestore.
+                    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+                    const user = userCredential.user;
+                    await updateProfile(user, { displayName: name });
+                    
+                    await setDoc(doc(db, "teachers", user.uid), teacherData);
+                    await setDoc(doc(db, "users", user.uid), {
+                        uid: user.uid,
+                        name: name,
+                        email: email,
+                        role: 'teacher',
+                        approved: true, // Teachers are pre-approved by admin
+                    });
+                    
+                    showMessage("Teacher added successfully!");
+                }
+                document.getElementById('teacher-form').reset();
+                loadTeachers();
+            } catch (error) {
+                showMessage(`Error saving teacher: ${error.message}`);
+                console.error("Error saving teacher:", error);
+            }
+        }
+
+
+        function handleClearTeacherForm() {
+            document.getElementById('teacher-form').reset();
+        }
+
+        async function handleEditTeacher(e) {
+            const id = e.target.dataset.id;
+            const docRef = doc(db, "teachers", id);
+            const docSnap = await getDoc(docRef);
+            if(docSnap.exists()){
+                const teacher = docSnap.data();
+                document.getElementById('teacher-id').value = id;
+                document.getElementById('teacher-name').value = teacher.name;
+                document.getElementById('teacher-email').value = teacher.email;
+                document.getElementById('teacher-department').value = teacher.department;
+                document.getElementById('teacher-subject').value = teacher.subject;
+                document.getElementById('teacher-password').value = "";
+                document.getElementById('teacher-password').placeholder = "Enter new password to change";
+            }
+        }
+
+        async function handleDeleteTeacher(e) {
+            const id = e.target.dataset.id;
+            if(confirm("Are you sure you want to delete this teacher? This action cannot be undone.")){
+                try {
+                    await deleteDoc(doc(db, "teachers", id));
+                    await deleteDoc(doc(db, "users", id)); // Also delete from users collection
+                    // Note: Deleting the Firebase Auth user requires admin SDK, usually in a backend function.
+                    // We'll skip that part on the client-side for simplicity.
+                    showMessage("Teacher deleted successfully.");
+                    loadTeachers();
+                } catch(error) {
+                    showMessage(`Error deleting teacher: ${error.message}`);
+                    console.error("Error deleting teacher:", error);
+                }
+            }
+        }
+
+
+        async function renderApproveStudents() {
+            contentArea.innerHTML = `
+                <h3 class="text-xl font-bold mb-4">Approve Student Registrations</h3>
+                <div id="student-approval-list" class="space-y-2"></div>
+            `;
+            loadPendingStudents();
+        }
+
+        async function loadPendingStudents() {
+            const studentListDiv = document.getElementById('student-approval-list');
+            studentListDiv.innerHTML = '<p>Loading pending approvals...</p>';
+            try {
+                const q = query(collection(db, "users"), where("role", "==", "student"), where("approved", "==", false));
+                const querySnapshot = await getDocs(q);
+                let studentsHTML = '';
+                querySnapshot.forEach((doc) => {
+                    const student = doc.data();
+                    studentsHTML += `
+                        <div class="p-4 bg-gray-50 rounded-lg flex justify-between items-center">
+                            <div>
+                                <p class="font-bold">${student.name}</p>
+                                <p class="text-sm text-gray-600">${student.email}</p>
+                            </div>
+                            <button data-id="${doc.id}" class="approve-student-btn bg-green-500 hover:bg-green-600 text-white py-1 px-3 rounded">Approve</button>
+                        </div>
+                    `;
+                });
+                studentListDiv.innerHTML = studentsHTML || '<p>No pending student approvals.</p>';
+            } catch (error) {
+                console.error("Error loading pending students:", error);
+                studentListDiv.innerHTML = '<p class="text-red-500">Error loading students.</p>';
+            }
+        }
+
+        async function handleApproveStudent(e) {
+            const id = e.target.dataset.id;
+             try {
+                const studentDocRef = doc(db, "users", id);
+                await updateDoc(studentDocRef, { approved: true });
+                showMessage("Student approved successfully!");
+                loadPendingStudents();
+            } catch(error) {
+                showMessage(`Error approving student: ${error.message}`);
+                console.error("Error approving student:", error);
+            }
+        }
+
+        // --- TEACHER DASHBOARD ---
+        function renderTeacherDashboard() {
+            contentArea.innerHTML = `
+                 <h2 class="text-2xl font-bold mb-4">Teacher Dashboard</h2>
+                 <p>Welcome, Teacher. Select an option from the navigation bar.</p>
+            `;
+            renderTeacherSchedule();
+        }
+
+        function renderTeacherSchedule() {
+             contentArea.innerHTML = `
+                <h3 class="text-xl font-bold mb-4">My Schedule</h3>
+                <p>Define your available time slots for students to book.</p>
+                <form id="schedule-form" class="mt-4 space-y-4 max-w-lg">
+                    <input type="date" id="schedule-date" required class="w-full px-4 py-2 border rounded-lg">
+                    <input type="time" id="schedule-time" required class="w-full px-4 py-2 border rounded-lg">
+                    <button type="submit" class="w-full bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg">Add Available Slot</button>
+                </form>
+                <div class="mt-8">
+                    <h4 class="font-bold">My Current Schedule:</h4>
+                    <div id="current-schedule" class="mt-2 space-y-2"></div>
+                </div>
+             `;
+             loadTeacherSchedule();
+        }
+
+        async function handleAddSchedule(e) {
+            e.preventDefault();
+            const date = document.getElementById('schedule-date').value;
+            const time = document.getElementById('schedule-time').value;
+            if (!date || !time) {
+                showMessage("Please select both a date and a time.");
+                return;
+            }
+
+            const scheduleDateTime = new Date(`${date}T${time}`);
+
+            try {
+                await addDoc(collection(db, "schedules"), {
+                    teacherId: currentUser.uid,
+                    teacherName: currentUser.displayName,
+                    dateTime: scheduleDateTime,
+                    status: 'available' // available, booked
+                });
+                showMessage("Availability slot added successfully!");
+                document.getElementById('schedule-form').reset();
+                loadTeacherSchedule();
+            } catch (error) {
+                 showMessage(`Error adding schedule: ${error.message}`);
+                 console.error("Error adding schedule:", error);
+            }
+        }
+
+        async function loadTeacherSchedule() {
+            const scheduleDiv = document.getElementById('current-schedule');
+            scheduleDiv.innerHTML = "<p>Loading schedule...</p>";
+
+            const q = query(collection(db, "schedules"), where("teacherId", "==", currentUser.uid));
+            onSnapshot(q, (querySnapshot) => {
+                let scheduleHTML = '';
+                if(querySnapshot.empty){
+                    scheduleDiv.innerHTML = '<p>You have not set any availability.</p>';
+                    return;
+                }
+                querySnapshot.forEach((doc) => {
+                    const slot = doc.data();
+                    const slotDate = slot.dateTime.toDate();
+                    scheduleHTML += `
+                        <div class="p-4 rounded-lg flex justify-between items-center ${slot.status === 'available' ? 'bg-green-100' : 'bg-yellow-100'}">
+                            <div>
+                                <p class="font-bold">${slotDate.toLocaleDateString()} - ${slotDate.toLocaleTimeString()}</p>
+                                <p class="capitalize">Status: ${slot.status}</p>
+                            </div>
+                            ${slot.status === 'available' ? `<button data-id="${doc.id}" class="delete-slot-btn text-sm bg-red-500 hover:bg-red-600 text-white py-1 px-3 rounded">Delete</button>` : ''}
+                        </div>
+                    `;
+                });
+                 scheduleDiv.innerHTML = scheduleHTML;
+            });
+        }
+        
+        async function handleDeleteScheduleSlot(e){
+            const slotId = e.target.dataset.id;
+            if(confirm("Are you sure you want to delete this available slot?")){
+                try {
+                    await deleteDoc(doc(db, "schedules", slotId));
+                    showMessage("Slot deleted successfully.");
+                    // The onSnapshot will update the view automatically.
+                } catch(error){
+                    showMessage(`Error deleting slot: ${error.message}`);
+                    console.error("Error deleting slot:", error);
+                }
+            }
+        }
+
+        function renderTeacherAppointments() {
+            contentArea.innerHTML = `
+                <h3 class="text-xl font-bold mb-4">My Appointments</h3>
+                <p>Here are your upcoming appointments with students.</p>
+                <div id="teacher-appointments-list" class="mt-4 space-y-4"></div>
+            `;
+            loadTeacherAppointments();
+        }
+
+        async function loadTeacherAppointments() {
+            const appointmentsDiv = document.getElementById('teacher-appointments-list');
+            appointmentsDiv.innerHTML = "<p>Loading appointments...</p>";
+
+            const q = query(collection(db, "appointments"), where("teacherId", "==", currentUser.uid));
+             onSnapshot(q, (querySnapshot) => {
+                if(querySnapshot.empty){
+                    appointmentsDiv.innerHTML = '<p>You have no pending or confirmed appointments.</p>';
+                    return;
+                }
+                let appointmentsHTML = '';
+                querySnapshot.forEach((doc) => {
+                    const appt = doc.data();
+                    const apptDate = appt.dateTime.toDate();
+                    const statusColor = appt.status === 'pending' ? 'bg-yellow-100' : appt.status === 'approved' ? 'bg-green-100' : 'bg-red-100';
+                    appointmentsHTML += `
+                        <div class="p-4 rounded-lg ${statusColor}">
+                            <p class="font-bold">${apptDate.toLocaleDateString()} - ${apptDate.toLocaleTimeString()}</p>
+                            <p>Student: ${appt.studentName}</p>
+                            <p>Message: ${appt.message}</p>
+                            <p class="capitalize">Status: <span class="font-semibold">${appt.status}</span></p>
+                            ${appt.status === 'pending' ? `
+                                <div class="mt-2 space-x-2">
+                                    <button data-id="${doc.id}" class="approve-appt-btn text-sm bg-green-500 hover:bg-green-600 text-white py-1 px-3 rounded">Approve</button>
+                                    <button data-id="${doc.id}" class="cancel-appt-btn text-sm bg-red-500 hover:bg-red-600 text-white py-1 px-3 rounded">Cancel</button>
+                                </div>
+                            ` : ''}
+                        </div>
+                    `;
+                });
+                appointmentsDiv.innerHTML = appointmentsHTML;
+            });
+        }
+        
+        async function handleUpdateAppointmentStatus(e, newStatus){
+             const apptId = e.target.dataset.id;
+             try {
+                await updateDoc(doc(db, "appointments", apptId), { status: newStatus });
+                showMessage(`Appointment ${newStatus} successfully.`);
+             } catch(error) {
+                showMessage(`Error updating appointment: ${error.message}`);
+                console.error("Error updating appointment:", error);
+             }
+        }
+
+
+        // --- STUDENT DASHBOARD ---
+        function renderStudentDashboard() {
+             contentArea.innerHTML = `
+                 <h2 class="text-2xl font-bold mb-4">Student Dashboard</h2>
+                 <p>Welcome, Student. Select an option from the navigation bar.</p>
+            `;
+            renderSearchTeachers();
+        }
+        
+        function renderSearchTeachers(){
+            contentArea.innerHTML = `
+                <h3 class="text-xl font-bold mb-4">Book an Appointment</h3>
+                <div class="mb-4">
+                    <input type="text" id="teacher-search-input" class="w-full px-4 py-2 border rounded-lg" placeholder="Search for teachers by name, department, or subject...">
+                </div>
+                <div id="available-teachers-list" class="space-y-4"></div>
+            `;
+            loadAvailableTeachers();
+        }
+        
+        async function loadAvailableTeachers(searchTerm = '') {
+            const teachersListDiv = document.getElementById('available-teachers-list');
+            teachersListDiv.innerHTML = '<p>Loading available teachers...</p>';
+            
+            try {
+                const teachersSnapshot = await getDocs(collection(db, "teachers"));
+                let teachers = [];
+                teachersSnapshot.forEach(doc => teachers.push({ id: doc.id, ...doc.data() }));
+
+                const lowerSearchTerm = searchTerm.toLowerCase();
+                const filteredTeachers = teachers.filter(t => 
+                    t.name.toLowerCase().includes(lowerSearchTerm) ||
+                    t.department.toLowerCase().includes(lowerSearchTerm) ||
+                    t.subject.toLowerCase().includes(lowerSearchTerm)
+                );
+                
+                let teachersHTML = '';
+                if(filteredTeachers.length === 0){
+                    teachersListDiv.innerHTML = '<p>No teachers found matching your search.</p>';
+                    return;
+                }
+
+                for(const teacher of filteredTeachers) {
+                    const scheduleQuery = query(collection(db, "schedules"), where("teacherId", "==", teacher.id), where("status", "==", "available"));
+                    const scheduleSnapshot = await getDocs(scheduleQuery);
+                    
+                    let slotsHTML = '<option value="">Select an available slot</option>';
+                    let hasSlots = false;
+                    scheduleSnapshot.forEach(doc => {
+                        hasSlots = true;
+                        const slot = doc.data();
+                        const slotDate = slot.dateTime.toDate();
+                        slotsHTML += `<option value="${doc.id}">${slotDate.toLocaleString()}</option>`;
+                    });
+
+                    if(hasSlots) {
+                       teachersHTML += `
+                            <div class="p-4 bg-gray-50 rounded-lg">
+                                <p class="font-bold text-lg">${teacher.name}</p>
+                                <p class="text-gray-600">${teacher.department} - ${teacher.subject}</p>
+                                <form class="book-appointment-form mt-4 space-y-2" data-teacher-id="${teacher.id}" data-teacher-name="${teacher.name}">
+                                    <select required class="w-full p-2 border rounded-lg schedule-slot-select">
+                                        ${slotsHTML}
+                                    </select>
+                                    <textarea placeholder="Reason for appointment..." required class="w-full p-2 border rounded-lg appointment-message"></textarea>
+                                    <button type="submit" class="w-full bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg">Book Now</button>
+                                </form>
+                            </div>
+                       `;
+                    }
+                }
+
+                teachersListDiv.innerHTML = teachersHTML || '<p>No teachers with available slots found.</p>';
+
+            } catch (error) {
+                console.error("Error loading teachers for booking:", error);
+                teachersListDiv.innerHTML = '<p class="text-red-500">Error loading teachers.</p>';
+            }
+        }
+        
+        async function handleBookAppointment(e) {
+            e.preventDefault();
+            const form = e.target;
+            const teacherId = form.dataset.teacherId;
+            const teacherName = form.dataset.teacherName;
+            const scheduleId = form.querySelector('.schedule-slot-select').value;
+            const message = form.querySelector('.appointment-message').value;
+
+            if(!scheduleId){
+                showMessage("Please select an available time slot.");
+                return;
+            }
+
+            try {
+                // Get schedule datetime
+                const scheduleDoc = await getDoc(doc(db, "schedules", scheduleId));
+                if (!scheduleDoc.exists() || scheduleDoc.data().status !== 'available') {
+                    showMessage("This slot is no longer available. Please refresh and try again.");
+                    return;
+                }
+                const dateTime = scheduleDoc.data().dateTime;
+                
+                // Create appointment
+                await addDoc(collection(db, "appointments"), {
+                    studentId: currentUser.uid,
+                    studentName: currentUser.displayName,
+                    teacherId: teacherId,
+                    teacherName: teacherName,
+                    scheduleId: scheduleId,
+                    dateTime: dateTime,
+                    message: message,
+                    status: 'pending' // pending, approved, cancelled
+                });
+                
+                // Update schedule slot status
+                await updateDoc(doc(db, "schedules", scheduleId), { status: 'booked' });
+                
+                showMessage("Appointment requested successfully! You will be notified when the teacher responds.");
+                loadAvailableTeachers(); // Refresh the list
+                
+            } catch (error) {
+                showMessage(`Error booking appointment: ${error.message}`);
+                console.error("Error booking appointment:", error);
+            }
+        }
+        
+        function renderStudentAppointments() {
+             contentArea.innerHTML = `
+                <h3 class="text-xl font-bold mb-4">My Booked Appointments</h3>
+                <div id="student-appointments-list" class="mt-4 space-y-4"></div>
+            `;
+            loadStudentAppointments();
+        }
+
+        async function loadStudentAppointments() {
+            const appointmentsDiv = document.getElementById('student-appointments-list');
+            appointmentsDiv.innerHTML = "<p>Loading your appointments...</p>";
+
+            const q = query(collection(db, "appointments"), where("studentId", "==", currentUser.uid));
+            onSnapshot(q, (querySnapshot) => {
+                 if(querySnapshot.empty){
+                    appointmentsDiv.innerHTML = '<p>You have not booked any appointments.</p>';
+                    return;
+                }
+                let appointmentsHTML = '';
+                querySnapshot.forEach((doc) => {
+                    const appt = doc.data();
+                    const apptDate = appt.dateTime.toDate();
+                    const statusColor = appt.status === 'pending' ? 'bg-yellow-100' : appt.status === 'approved' ? 'bg-green-100' : 'bg-red-100';
+
+                    appointmentsHTML += `
+                         <div class="p-4 rounded-lg ${statusColor}">
+                            <p class="font-bold">${apptDate.toLocaleDateString()} - ${apptDate.toLocaleTimeString()}</p>
+                            <p>Teacher: ${appt.teacherName}</p>
+                             <p>Message: ${appt.message}</p>
+                            <p class="capitalize">Status: <span class="font-semibold">${appt.status}</span></p>
+                        </div>
+                    `;
+                });
+                appointmentsDiv.innerHTML = appointmentsHTML;
+            });
+        }
+
+
+        // --- MODAL & UTILITY FUNCTIONS ---
+        function showMessage(message) {
+            const modal = document.getElementById('messageModal');
+            const modalText = document.getElementById('messageModalText');
+            modalText.textContent = message;
+            modal.style.display = 'block';
+        }
+
+        function closeMessageModal() {
+            const modal = document.getElementById('messageModal');
+            modal.style.display = 'none';
+        }
+
+
+        // --- EVENT LISTENERS ---
+        document.addEventListener('click', (e) => {
+            // Auth form switching
+            if (e.target.id === 'show-register') {
+                e.preventDefault();
+                renderRegister();
+            }
+            if (e.target.id === 'show-login') {
+                e.preventDefault();
+                renderLogin();
+            }
+            // Logout
+            if (e.target.id === 'logout-btn') {
+                handleLogout();
+            }
+            // Navigation
+            if(e.target.classList.contains('nav-btn')){
+                const page = e.target.dataset.page;
+                if(page === 'teachers') renderManageTeachers();
+                if(page === 'students') renderApproveStudents();
+                if(page === 'schedule') renderTeacherSchedule();
+                if(page === 'appointments') renderTeacherAppointments();
+                if(page === 'search') renderSearchTeachers();
+                if(page === 'my-appointments') renderStudentAppointments();
+            }
+            // Admin actions
+            if (e.target.id === 'clear-form-btn') handleClearTeacherForm();
+            if (e.target.classList.contains('edit-teacher-btn')) handleEditTeacher(e);
+            if (e.target.classList.contains('delete-teacher-btn')) handleDeleteTeacher(e);
+            if (e.target.classList.contains('approve-student-btn')) handleApproveStudent(e);
+
+            // Teacher actions
+            if (e.target.classList.contains('delete-slot-btn')) handleDeleteScheduleSlot(e);
+            if (e.target.classList.contains('approve-appt-btn')) handleUpdateAppointmentStatus(e, 'approved');
+            if (e.target.classList.contains('cancel-appt-btn')) handleUpdateAppointmentStatus(e, 'cancelled');
+
+            // Modal
+            if (e.target.id === 'messageModalClose') closeMessageModal();
+        });
+
+        document.addEventListener('submit', (e) => {
+            if (e.target.id === 'login-form') handleLogin(e);
+            if (e.target.id === 'register-form') handleRegister(e);
+            if (e.target.id === 'teacher-form') handleTeacherFormSubmit(e);
+            if (e.target.id === 'schedule-form') handleAddSchedule(e);
+            if (e.target.classList.contains('book-appointment-form')) handleBookAppointment(e);
+        });
+        
+        document.addEventListener('keyup', (e) => {
+             if (e.target.id === 'teacher-search-input') {
+                loadAvailableTeachers(e.target.value);
+            }
+        });
+
+
+        // Initial Load
+        renderLogin();
+    </script>
+</body>
+</html>
